@@ -1,0 +1,6 @@
+pandas
+openpyxl
+openai
+tiktoken
+python-dotenv
+nest_asyncio
