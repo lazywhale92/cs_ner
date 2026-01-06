@@ -1,6 +1,5 @@
 
 import logging
-import tiktoken
 import time
 from dataclasses import dataclass
 import os
@@ -16,12 +15,14 @@ def setup_logging(level=logging.INFO):
 
 logger = setup_logging()
 
-# Tokenizer setup
-TOKEN_ENCODING_NAME = "cl100k_base"
-try:
-    encoding = tiktoken.get_encoding(TOKEN_ENCODING_NAME)
-except Exception:
-    encoding = tiktoken.get_encoding("cl100k_base")
+# Tokenizer setup (optional tiktoken)
+# _tiktoken_encoding = None
+# try:
+#     import tiktoken
+#     _tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
+#     logger.debug("tiktoken 사용: 정확한 토큰 카운팅")
+# except ImportError:
+#     logger.debug("tiktoken 미설치: 문자 수 기반 추정 사용")
 
 @dataclass
 class StatusTracker:
@@ -41,5 +42,14 @@ class StatusTracker:
         )
 
 def count_tokens(text: str) -> int:
-    """Returns the number of tokens in a text string."""
-    return len(encoding.encode(text))
+    """
+    Returns the number of tokens in a text string.
+    tiktoken 설치 시 정확한 값, 미설치 시 문자 수 기반 추정.
+    (한국어 기준 보수적으로 2자 = 1토큰으로 계산)
+    """
+
+    _tiktoken_encoding = None
+    if _tiktoken_encoding is not None:
+        return len(_tiktoken_encoding.encode(text))
+    # Fallback: 문자 수 / 2 (한국어 보수적 추정)
+    return max(1, len(text) // 2)

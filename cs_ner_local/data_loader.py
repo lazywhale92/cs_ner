@@ -2,8 +2,8 @@
 import pandas as pd
 import os
 from typing import List, Dict, Any, Optional
-from .config import DomainConfig
-from .utils import logger
+from config import DomainConfig
+from utils import logger
 
 def load_data(file_path: str, config: DomainConfig) -> pd.DataFrame:
     """

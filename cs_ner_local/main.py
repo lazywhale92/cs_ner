@@ -2,19 +2,25 @@
 import os
 import argparse
 import asyncio
+import sys
 import pandas as pd
 import json
 from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
 from datetime import datetime
+import httpx
 
-from .config import get_config
-from .data_loader import load_data, save_results, load_categories
-from .processor import process_api_requests
-from .utils import logger
+from config import get_config
+from data_loader import load_data, save_results, load_categories
+from processor import process_api_requests
+from utils import logger
 
 # Load environment variables
 load_dotenv()
+
+# window 호환성
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio._WindowsSelectorEventLoopPolicy())
 
 def main():
     parser = argparse.ArgumentParser(description="Local CS NER Processor")
@@ -62,11 +68,22 @@ def main():
     system_msg = config.system_prompt_template.format(categories_json=categories_json)
 
     # 6. Initialize Client
-    client = AsyncAzureOpenAI(
-        api_key=api_key,
-        api_version=api_version,
-        azure_endpoint=endpoint
-    )
+    skip_ssl = os.getenv("SKIP_SSL_VERIFY", "false").lower() == "true"
+    if skip_ssl:
+        logger.warning("SSL 검증 비활성화됨")
+        http_client = httpx.AsyncClient(verify=False)
+        client = AsyncAzureOpenAI(
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            http_client=http_client
+        )
+    else:
+        client = AsyncAzureOpenAI(
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=endpoint
+        )
 
     # 7. Run Processing
     logger.info("Initializing Async API Processing...")

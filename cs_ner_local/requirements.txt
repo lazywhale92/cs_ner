@@ -1,6 +1,6 @@
 pandas
 openpyxl
 openai
-tiktoken
 python-dotenv
 nest_asyncio
+# tiktoken  # 선택적: 정확한 토큰 카운팅 (없어도 동작함)

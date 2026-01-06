@@ -7,13 +7,13 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from openai import AsyncAzureOpenAI
 import pandas as pd
-import nest_asyncio
+# import nest_asyncio
 
-from .utils import logger, StatusTracker, count_tokens
-from .config import DomainConfig
+from utils import logger, StatusTracker, count_tokens
+from config import DomainConfig
 
 # Apply nest_asyncio to allow nested event loops if necessary
-nest_asyncio.apply()
+# nest_asyncio.apply()
 
 # Constants for Rate Limiting
 BATCH_SIZE = 5
@@ -91,7 +91,9 @@ class APIRequest:
                 error = e
 
         except Exception as e:
+            import traceback
             logger.warning(f"[Request #{self.task_id}] Failed: {e}")
+            logger.warning(f"[Request #{self.task_id}] traceback: \n{traceback.format_exc()}")
             status_tracker.num_api_errors += 1
             error = e
             if "rate limit" in str(e).lower():

@@ -5,7 +5,7 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Callable, List, Dict, Any, Union, Optional
 
-from .preprocessing import preprocess_air, preprocess_simple
+from preprocessing import preprocess_air, preprocess_simple
 
 @dataclass
 class DomainConfig:
