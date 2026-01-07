@@ -39,14 +39,12 @@ def mask_text_advanced(text: str, mask_vals: List[str] = None) -> str:
     
     return text
 
-def preprocess_air(df: pd.DataFrame) -> pd.DataFrame:
+def mask_air(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Air Domain Preprocessing:
-    1. Filter response_type = 'RECEIVE' ?? (Original code did this: WHERE response_type = 'RECEIVE')
-       - user might not want to filter locally if they provided specific input, but let's stick to logic.
-       - Let's check input columns first.
-    2. Anonymize title/content.
-    3. Aggregate by thread_id (concat by time).
+    Air 도메인 마스킹 (개별 ticket 레벨)
+    - response_type 필터링
+    - PII 마스킹 (여권번호, 전화번호, 개인정보)
+    - 반환: 원본 행 수 유지, title_anon/content_anon 컬럼 추가
     """
     # Filter if column exists
     if "response_type" in df.columns:
@@ -56,7 +54,7 @@ def preprocess_air(df: pd.DataFrame) -> pd.DataFrame:
 
     # Columns to mask (if they exist)
     mask_cols = ["inquirer_id", "inquirer_name", "inquiry_status", "reservation_number", "destination"]
-    
+
     def apply_mask(row):
         cols_vals = [row[c] for c in mask_cols if c in row]
         # Mask both title and content
@@ -65,16 +63,27 @@ def preprocess_air(df: pd.DataFrame) -> pd.DataFrame:
         return mask_text_advanced(t, cols_vals), mask_text_advanced(c, cols_vals)
 
     # Apply masking
-    # Using apply is slow for huge data but fine for typical Excel (<100k rows).
     mask_results = df.apply(apply_mask, axis=1)
     df["title_anon"] = [x[0] for x in mask_results]
     df["content_anon"] = [x[1] for x in mask_results]
 
-    # Aggregate
-    # Sort by time first to ensure concat order? 
+    return df
+
+
+def aggregate_by_thread(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Thread별 집계 (API 호출용)
+    - groupby thread_id
+    - content 시간순 연결
+    - 반환: thread_id별 1행
+    """
+    if "thread_id" not in df.columns:
+        raise ValueError("Air domain requires 'thread_id' column for aggregation.")
+
+    # Sort by time first to ensure concat order
     if "inquiry_created_at" in df.columns:
         df = df.sort_values("inquiry_created_at")
-    
+
     # helper for aggregation: join with space
     def join_text(x):
         return " ".join([str(s) for s in x if s])
@@ -82,24 +91,24 @@ def preprocess_air(df: pd.DataFrame) -> pd.DataFrame:
     agg_rules = {
         "title_anon": join_text,
         "content_anon": join_text,
-        # Keep created_at? maybe max?
     }
-    
-    # Group By
-    if "thread_id" not in df.columns:
-        raise ValueError("Air domain requires 'thread_id' column for aggregation.")
-        
+
     df_agg = df.groupby("thread_id", as_index=False).agg(agg_rules)
-    
+
     # Rename to expected output: 'content' for the processor
-    # Original Air logic: full_content_anon is the main input (which is concat of content_anon)
-    # But wait, original code: full_content_anon = concat(content_anon_list).
-    # And create_user_message uses `content`.
-    # So we map `content_anon` (aggregated) -> `content`.
-    
     df_agg = df_agg.rename(columns={"content_anon": "content"})
-    
+
     return df_agg
+
+
+def preprocess_air(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Air Domain Preprocessing (하위 호환성 유지)
+    1. 마스킹 적용
+    2. Thread별 집계
+    """
+    masked_df = mask_air(df)
+    return aggregate_by_thread(masked_df)
 
 def preprocess_simple(df: pd.DataFrame) -> pd.DataFrame:
     """

@@ -5,51 +5,57 @@ from typing import List, Dict, Any, Optional
 from config import DomainConfig
 from utils import logger
 
-def load_data(file_path: str, config: DomainConfig) -> pd.DataFrame:
+def load_data(file_path: str, config: DomainConfig, skip_preprocess: bool = False) -> pd.DataFrame:
     """
     Loads data from an Excel or CSV file and normalizes columns based on domain config.
+
+    Args:
+        file_path: 입력 파일 경로
+        config: 도메인 설정
+        skip_preprocess: True면 전처리 없이 원본 반환 (컬럼 정규화만 수행)
+
+    Returns:
+        DataFrame (skip_preprocess=True면 원본, False면 전처리 결과)
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Input file not found: {file_path}")
 
     logger.info(f"Loading data from {file_path}...")
-    
+
     if file_path.endswith('.xlsx') or file_path.endswith('.xls'):
         df = pd.read_excel(file_path, engine='openpyxl')
     elif file_path.endswith('.csv'):
         df = pd.read_csv(file_path)
     else:
         raise ValueError("Unsupported file format. Please use .xlsx or .csv")
-    
+
     # Rename columns to standard internal names
-    
+
     # 1. Positional Renaming (List)
     if isinstance(config.input_columns, list):
         if len(df.columns) == len(config.input_columns):
              df.columns = config.input_columns
              logger.info("Applied positional column renaming.")
         else:
-             # Fallback: maybe columns match partially? Or strict error?
-             # Original code: if len == 14 else df.columns. 
-             # We should warn if size mismatch.
              logger.warning(f"Column count mismatch. Expected {len(config.input_columns)}, got {len(df.columns)}. Skipping rename.")
-             
-             # If rename skipped, we hope columns already match internal keys?
-             # But if they don't, next steps will fail.
-    
+
     # 2. Dictionary Mapping (Dict)
     elif isinstance(config.input_columns, dict):
         df = df.rename(columns=config.input_columns)
+
+    # skip_preprocess=True: 원본 데이터만 반환 (컬럼 정규화만 수행)
+    if skip_preprocess:
+        logger.info(f"Raw data loaded: {len(df)} rows, {len(df.columns)} columns (preprocessing skipped)")
+        return df
 
     # 3. Run Domain Extraction / Preprocessing
     try:
         df_processed = config.preprocess_func(df)
     except Exception as e:
         logger.error(f"Preprocessing failed: {e}")
-        # Log available columns for debugging
-        logger.error(f"Available columns: {list(df_renamed.columns)}")
+        logger.error(f"Available columns: {list(df.columns)}")
         raise e
-        
+
     logger.info(f"Preprocessed data: {len(df_processed)} rows ready for API.")
     return df_processed
 
