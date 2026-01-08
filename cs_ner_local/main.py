@@ -12,7 +12,7 @@ import httpx
 
 from config import get_config
 from data_loader import load_data, save_results, load_categories
-from processor import process_api_requests
+from processor import process_api_requests, CheckpointManager
 from utils import logger
 
 # Load environment variables
@@ -128,6 +128,13 @@ def main():
 
     # 8. Run Processing
     logger.info("Initializing Async API Processing...")
+
+    # 체크포인트 확인 및 안내
+    checkpoint_mgr = CheckpointManager(args.input, config.domain_name)
+    if checkpoint_mgr.exists():
+        logger.info(f"[Resume] 이전 체크포인트 발견: {checkpoint_mgr.checkpoint_path}")
+        logger.info("[Resume] 중단된 지점부터 이어서 처리합니다.")
+
     start_time = datetime.now()
 
     results = asyncio.run(process_api_requests(
@@ -135,7 +142,8 @@ def main():
         config=config,
         system_msg=system_msg,
         client=client,
-        deployment_name=deployment
+        deployment_name=deployment,
+        input_file=args.input
     ))
 
     end_time = datetime.now()

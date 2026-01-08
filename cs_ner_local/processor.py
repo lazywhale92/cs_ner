@@ -3,6 +3,8 @@ import asyncio
 import json
 import time
 import re
+import os
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from openai import AsyncAzureOpenAI
@@ -20,6 +22,55 @@ BATCH_SIZE = 5
 CHUNK_LOG = 10
 SECONDS_TO_PAUSE_AFTER_RATE_LIMIT = 15
 SECONDS_TO_SLEEP_EACH_LOOP = 0.001
+CHECKPOINT_INTERVAL = 10  # 10 배치(50건)마다 체크포인트 저장
+
+
+class CheckpointManager:
+    """체크포인트 저장/복구 관리자"""
+
+    def __init__(self, input_file: str, domain: str):
+        # 입력 파일명 기반으로 체크포인트 파일명 생성
+        base_name = os.path.splitext(os.path.basename(input_file))[0]
+        self.checkpoint_path = f"{base_name}_{domain}_checkpoint.json"
+        self.domain = domain
+        self.input_file = input_file
+
+    def exists(self) -> bool:
+        """체크포인트 파일 존재 여부"""
+        return os.path.exists(self.checkpoint_path)
+
+    def save(self, results: List[Dict], processed_batch_idx: int, total_batches: int):
+        """현재 진행상황 저장"""
+        checkpoint_data = {
+            "timestamp": datetime.now().isoformat(),
+            "input_file": self.input_file,
+            "domain": self.domain,
+            "processed_batch_idx": processed_batch_idx,
+            "total_batches": total_batches,
+            "results": results
+        }
+        with open(self.checkpoint_path, 'w', encoding='utf-8') as f:
+            json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Checkpoint saved: {processed_batch_idx}/{total_batches} batches ({len(results)} items)")
+
+    def load(self) -> Optional[Dict]:
+        """체크포인트 로드"""
+        if not self.exists():
+            return None
+        try:
+            with open(self.checkpoint_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"Checkpoint loaded: {data['processed_batch_idx']}/{data['total_batches']} batches")
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint: {e}")
+            return None
+
+    def cleanup(self):
+        """완료 후 체크포인트 삭제"""
+        if self.exists():
+            os.remove(self.checkpoint_path)
+            logger.info(f"Checkpoint file removed: {self.checkpoint_path}")
 
 @dataclass
 class APIRequest:
@@ -141,32 +192,45 @@ async def process_api_requests(
     max_requests_per_minute: float = 100,
     max_tokens_per_minute: float = 200000,
     max_attempts: int = 5,
+    input_file: str = "",
 ):
     """
-    Main async processing loop.
+    Main async processing loop with checkpoint support.
     """
     queue_of_requests_to_retry = asyncio.Queue()
     task_id_generator = task_id_generator_function()
     status_tracker = StatusTracker()
     next_request = None
-    
+
     available_request_capacity = max_requests_per_minute
     available_token_capacity = max_tokens_per_minute
     last_update_time = time.time()
-    
+
     # Create batches
-    # Filter out rows that might be completely empty or invalid if necessary
-    # But we assume data_loader handled basics.
-    
     batches = [
         data_df.iloc[i : i + BATCH_SIZE].to_dict(orient="records")
         for i in range(0, len(data_df), BATCH_SIZE)
     ]
     logger.info(f"Created {len(batches)} batches from {len(data_df)} items.")
-    
+
+    # 체크포인트 관리자 초기화
+    checkpoint_mgr = CheckpointManager(input_file, config.domain_name) if input_file else None
+
     all_results = []
     batch_idx = 0
     batches_exhausted = False
+    last_checkpoint_batch = 0
+
+    # 체크포인트에서 복구
+    if checkpoint_mgr and checkpoint_mgr.exists():
+        checkpoint_data = checkpoint_mgr.load()
+        if checkpoint_data:
+            all_results = checkpoint_data.get("results", [])
+            batch_idx = checkpoint_data.get("processed_batch_idx", 0)
+            last_checkpoint_batch = batch_idx
+            logger.info(f"Resuming from checkpoint: {batch_idx}/{len(batches)} batches ({len(all_results)} items already processed)")
+            if batch_idx >= len(batches):
+                batches_exhausted = True
     
     logger.debug("Entering main loop")
     
@@ -201,6 +265,15 @@ async def process_api_requests(
                 if batch_idx % CHUNK_LOG == 0 or batch_idx == len(batches):
                     logger.info(f"Progress: {batch_idx}/{len(batches)} batches queued")
                     status_tracker.log_status()
+
+                # 체크포인트 저장 (CHECKPOINT_INTERVAL 배치마다)
+                if checkpoint_mgr and (batch_idx - last_checkpoint_batch) >= CHECKPOINT_INTERVAL:
+                    # 비동기 작업 완료 대기
+                    await asyncio.sleep(1.0)
+                    # 실제 완료된 결과 수 기준으로 저장 (안전한 복구를 위해)
+                    completed_batches = len(all_results) // BATCH_SIZE
+                    checkpoint_mgr.save(all_results.copy(), completed_batches, len(batches))
+                    last_checkpoint_batch = batch_idx
                     
         # Update Rate Limits
         current_time = time.time()
@@ -248,4 +321,9 @@ async def process_api_requests(
             await asyncio.sleep(wait_time)
             
     logger.info(f"Processing complete. Generated {len(all_results)} results.")
+
+    # 완료 시 체크포인트 삭제
+    if checkpoint_mgr:
+        checkpoint_mgr.cleanup()
+
     return all_results
